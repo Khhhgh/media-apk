@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "MediaDownloader"
+rootProject.name = "media download - تحميل الميديا"
 
 include(":app")

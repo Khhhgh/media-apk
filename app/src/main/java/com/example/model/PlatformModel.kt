@@ -18,32 +18,9 @@ data class PlatformInfo(
         return if (isArabic && nameAr.isNotBlank()) nameAr else name
     }
 
-    /**
-     * Matches by host, not by plain substring. A substring test made "t.co" (Twitter) match
-     * pinterest.com, snapchat.com and reddit.com, so those links were detected as Twitter and
-     * were blocked whenever Twitter was in maintenance.
-     */
     fun matchesUrl(url: String): Boolean {
-        val lower = url.trim().lowercase()
-        val host = hostOf(lower)
-        return patterns.any { raw ->
-            val pat = raw.trim().lowercase().removePrefix("www.")
-            when {
-                pat.isEmpty() -> false
-                host == null || pat.contains('/') -> lower.contains(pat)
-                else -> host == pat || host.endsWith(".$pat")
-            }
-        }
-    }
-
-    private fun hostOf(lowerUrl: String): String? {
-        val withScheme = if (lowerUrl.startsWith("http://") || lowerUrl.startsWith("https://")) lowerUrl else "https://$lowerUrl"
-        val host = try {
-            java.net.URI(withScheme.substringBefore(' ')).host
-        } catch (_: Exception) {
-            null
-        }
-        return host?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+        val lower = url.lowercase()
+        return patterns.any { pat -> lower.contains(pat.lowercase()) }
     }
 }
 

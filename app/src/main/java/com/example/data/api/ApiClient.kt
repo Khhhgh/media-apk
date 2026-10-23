@@ -2,8 +2,6 @@ package com.example.data.api
 
 import android.util.Log
 import com.example.model.CarouselItem
-import com.example.model.MediaUrlHints
-import com.example.model.cleanAccountName
 import com.example.model.MediaResult
 import com.example.model.PlatformInfo
 import com.example.model.QualityOption
@@ -52,7 +50,7 @@ class ApiClient(
                 name = "Facebook",
                 nameAr = "فيسبوك",
                 enabled = true,
-                patterns = listOf("facebook.com", "fb.watch", "fb.com", "fb.me"),
+                patterns = listOf("facebook.com", "fb.watch", "fb.com"),
                 sampleUrl = "facebook.com/watch/?v=123",
                 icon = "facebook",
                 badge = "HD 1080p"
@@ -82,7 +80,7 @@ class ApiClient(
                 name = "Snapchat",
                 nameAr = "سناب شات",
                 enabled = true,
-                patterns = listOf("snapchat.com", "snap.com", "sc-cdn.net"),
+                patterns = listOf("snapchat.com", "sc-cdn.net"),
                 sampleUrl = "story.snapchat.com/s/xyz",
                 icon = "snapchat",
                 badge = "Spotlight"
@@ -102,7 +100,7 @@ class ApiClient(
                 name = "Threads",
                 nameAr = "ثريدز",
                 enabled = true,
-                patterns = listOf("threads.net", "threads.com"),
+                patterns = listOf("threads.net"),
                 sampleUrl = "threads.net/@user/post/xyz",
                 icon = "threads",
                 badge = "HD"
@@ -228,73 +226,28 @@ class ApiClient(
         parseMediaResult(data, targetUrl)
     }
 
-    /**
-     * org.json returns the literal text "null" from optString() when the value is JSON null.
-     * That produced "null@" in the UI. This reads the first usable value among [keys] and
-     * ignores JSON null, "null" and "undefined".
-     */
-    private fun JSONObject.cleanString(vararg keys: String): String {
-        for (key in keys) {
-            if (!has(key) || isNull(key)) continue
-            val text = when (val value = opt(key)) {
-                is String -> value
-                is Number, is Boolean -> value.toString()
-                else -> null
-            }?.trim() ?: continue
-            if (text.isNotEmpty() && !text.equals("null", ignoreCase = true) && !text.equals("undefined", ignoreCase = true)) {
-                return text
-            }
-        }
-        return ""
-    }
-
-    private fun extractAuthor(json: JSONObject): String? {
-        val keys = listOf(
-            "author", "username", "user_name", "uploader", "owner", "creator",
-            "nickname", "unique_id", "user", "account", "author_name", "channel"
-        )
-        for (key in keys) {
-            if (!json.has(key) || json.isNull(key)) continue
-            when (val value = json.opt(key)) {
-                is String -> cleanAccountName(value)?.let { return it }
-                is JSONObject -> {
-                    for (nameKey in listOf("unique_id", "username", "user_name", "nickname", "name", "display_name")) {
-                        cleanAccountName(value.cleanString(nameKey))?.let { return it }
-                    }
-                }
-                else -> Unit
-            }
-        }
-        return null
-    }
-
     private fun parseMediaResult(json: JSONObject, originalUrl: String): MediaResult {
-        val title = json.cleanString("title", "desc", "description").ifBlank { "Media Download" }
+        val title = json.optString("title").ifBlank { "Media Download" }
+        val videoUrl = json.optString("videoUrl")
+            .ifBlank { json.optString("video_url") }
+            .ifBlank { json.optString("url") }
+            .ifBlank { json.optString("download_url") }
 
-        val rawVideoUrl = json.cleanString("videoUrl", "video_url", "url", "download_url")
-
-        val audioUrl = json.cleanString("audioUrl", "audio_url", "music", "music_url")
+        val audioUrl = json.optString("audioUrl")
+            .ifBlank { json.optString("audio_url") }
             .takeIf { it.isNotBlank() }
 
-        val thumbnailUrl = json.cleanString("thumbnailUrl", "thumbnail_url", "thumbnail", "thumb", "cover")
+        val thumbnailUrl = json.optString("thumbnailUrl")
+            .ifBlank { json.optString("thumbnail_url") }
+            .ifBlank { json.optString("thumbnail") }
+            .ifBlank { json.optString("thumb") }
             .takeIf { it.isNotBlank() }
 
-        val platform = json.cleanString("platform").ifBlank { "Media" }
-        val author = extractAuthor(json)
-        val durationText = json.cleanString("durationText", "duration").takeIf { it.isNotBlank() }
-
-        // Declared post type (some servers send "image", "photo", "slideshow", "carousel", "video")
-        val declaredType = json.cleanString("type", "media_type", "post_type", "kind").lowercase()
-        val declaresImages = listOf("image", "photo", "slide", "carousel", "album", "gallery").any { declaredType.contains(it) }
-        val declaresVideo = declaredType.contains("video") && !declaresImages
-
-        // A "video" URL that is really an audio track (TikTok photo posts) must never be used as video
-        val videoUrl = when {
-            rawVideoUrl.isBlank() -> ""
-            rawVideoUrl == audioUrl -> ""
-            MediaUrlHints.looksLikeAudio(rawVideoUrl) -> ""
-            else -> rawVideoUrl
-        }
+        val platform = json.optString("platform").ifBlank { "Media" }
+        val author = json.optString("author").takeIf { it.isNotBlank() }
+        val durationText = json.optString("durationText")
+            .ifBlank { json.optString("duration") }
+            .takeIf { it.isNotBlank() }
 
         // Quality options
         val qualityList = mutableListOf<QualityOption>()
@@ -304,14 +257,14 @@ class ApiClient(
 
         if (qualitiesArr != null) {
             for (i in 0 until qualitiesArr.length()) {
-                val qObj = qualitiesArr.optJSONObject(i) ?: continue
-                val qUrl = qObj.cleanString("url", "download_url")
+                val qObj = qualitiesArr.getJSONObject(i)
+                val qUrl = qObj.optString("url").ifBlank { qObj.optString("download_url") }
                 if (qUrl.isNotBlank()) {
                     qualityList.add(
                         QualityOption(
-                            label = qObj.cleanString("label").ifBlank { "MP4" },
+                            label = qObj.optString("label", "MP4"),
                             url = qUrl,
-                            format = qObj.cleanString("format").ifBlank { "mp4" },
+                            format = qObj.optString("format", "mp4"),
                             isHd = qObj.optBoolean("isHd", false) || qObj.optBoolean("hd", false)
                         )
                     )
@@ -319,52 +272,66 @@ class ApiClient(
             }
         }
 
-        // Extract all photo URLs from any possible array key
+        // If no qualities returned but videoUrl exists, provide standard default options
+        if (qualityList.isEmpty() && videoUrl.isNotBlank()) {
+            qualityList.add(
+                QualityOption(
+                    label = "فيديو عالي الدقة (HD MP4)",
+                    url = videoUrl,
+                    format = "mp4",
+                    isHd = true
+                )
+            )
+            if (!audioUrl.isNullOrBlank()) {
+                qualityList.add(
+                    QualityOption(
+                        label = "تحميل الصوت (MP3)",
+                        url = audioUrl,
+                        format = "mp3",
+                        isHd = false
+                    )
+                )
+            }
+        }
+
+        // Extract all photo URLs from any possible array key (images, photos, photoUrls, gallery, slides, entries, etc.)
         val photoList = extractPhotoUrls(json)
 
         // Extract all carousel items
         val carouselList = extractCarouselItems(json).toMutableList()
 
-        // A video post whose "images" array only holds its cover must stay a video post.
-        val hasRealVideo = videoUrl.isNotBlank() && !MediaUrlHints.looksLikeImage(videoUrl)
-        val onlyCover = photoList.size <= 1 && (photoList.isEmpty() || photoList.first() == thumbnailUrl)
-        val carouselHasVideo = carouselList.any { it.format.equals("mp4", ignoreCase = true) }
-        if (hasRealVideo && !declaresImages && !carouselHasVideo && (declaresVideo || onlyCover) && carouselList.size <= 1) {
-            photoList.clear()
-            carouselList.clear()
-        }
-
-        // The "video" URL is really a photo (single photo post)
-        if (photoList.isEmpty() && carouselList.isEmpty() && videoUrl.isNotBlank() && MediaUrlHints.looksLikeImage(videoUrl)) {
-            photoList.add(videoUrl)
-        }
-
-        // 1. Photos but no carousel entries -> build the carousel from the photos
+        // Synchronize carouselList and photoList:
+        // 1. If photoList has items and carouselList is empty, populate carouselList from photoList
         if (carouselList.isEmpty() && photoList.isNotEmpty()) {
             photoList.forEachIndexed { idx, url ->
-                carouselList.add(CarouselItem(url = url, format = "jpg", label = "Photo ${idx + 1}", isHd = true))
+                carouselList.add(
+                    CarouselItem(
+                        url = url,
+                        format = "jpg",
+                        label = "Photo ${idx + 1}",
+                        isHd = true
+                    )
+                )
             }
         }
-        // 2. Carousel entries but no photo list -> collect the image slides
+        // 2. If carouselList has items and photoList is empty, populate photoList with all image items
         if (photoList.isEmpty() && carouselList.isNotEmpty()) {
             carouselList.forEach { item ->
-                if (!item.format.equals("mp4", ignoreCase = true)) photoList.add(item.url)
+                if (!item.format.equals("mp4", ignoreCase = true) && !item.url.contains(".mp4", ignoreCase = true)) {
+                    photoList.add(item.url)
+                }
             }
         }
 
-        // Quality options only make sense for a real video
-        if (qualityList.isEmpty() && videoUrl.isNotBlank() && photoList.isEmpty()) {
-            qualityList.add(QualityOption(label = "فيديو عالي الدقة (HD MP4)", url = videoUrl, format = "mp4", isHd = true))
-            if (!audioUrl.isNullOrBlank()) {
-                qualityList.add(QualityOption(label = "تحميل الصوت (MP3)", url = audioUrl, format = "mp3", isHd = false))
-            }
-        }
-
-        val resolvedVideoUrl = when {
-            videoUrl.isNotBlank() -> videoUrl
-            carouselList.isNotEmpty() -> carouselList.first().url
-            photoList.isNotEmpty() -> photoList.first()
-            else -> ""
+        // 3. If there are multiple items, ensure videoUrl points to first item if blank
+        val resolvedVideoUrl = if (videoUrl.isNotBlank()) {
+            videoUrl
+        } else if (carouselList.isNotEmpty()) {
+            carouselList.first().url
+        } else if (photoList.isNotEmpty()) {
+            photoList.first()
+        } else {
+            ""
         }
 
         return MediaResult(
@@ -399,22 +366,26 @@ class ApiClient(
                 val candidateUrl: String? = when (element) {
                     is String -> element
                     is JSONObject -> {
-                        // Skip video entries; they belong to the carousel, not to the photo list
-                        val type = element.cleanString("type", "media_type").lowercase()
-                        if (type.contains("video")) null
-                        else element.cleanString(
-                            "url", "display_url", "image", "src", "download_url", "photo_url", "original"
-                        ).takeIf { it.isNotBlank() }
+                        element.optString("url")
+                            .ifBlank { element.optString("display_url") }
+                            .ifBlank { element.optString("image") }
+                            .ifBlank { element.optString("src") }
+                            .ifBlank { element.optString("download_url") }
+                            .ifBlank { element.optString("photo_url") }
+                            .ifBlank { element.optString("original") }
+                            .takeIf { it.isNotBlank() }
                     }
                     else -> null
                 }
 
-                val clean = candidateUrl?.trim().orEmpty()
-                if ((clean.startsWith("http://") || clean.startsWith("https://")) &&
-                    !MediaUrlHints.looksLikeVideo(clean) &&
-                    !MediaUrlHints.looksLikeAudio(clean)
-                ) {
-                    if (seen.add(clean)) results.add(clean)
+                if (!candidateUrl.isNullOrBlank()) {
+                    val clean = candidateUrl.trim()
+                    if (clean.startsWith("http://") || clean.startsWith("https://")) {
+                        // Avoid duplicates
+                        if (seen.add(clean)) {
+                            results.add(clean)
+                        }
+                    }
                 }
             }
         }
@@ -433,24 +404,30 @@ class ApiClient(
         for (key in carouselKeys) {
             val arr = json.optJSONArray(key) ?: continue
             for (i in 0 until arr.length()) {
-                val element = arr.opt(i) as? JSONObject ?: continue
-                val cUrl = element.cleanString("url", "download_url", "display_url", "src", "image")
-                if (cUrl.isBlank() || MediaUrlHints.looksLikeAudio(cUrl) || !seen.add(cUrl)) continue
+                val element = arr.opt(i) ?: continue
+                if (element is JSONObject) {
+                    val cUrl = element.optString("url")
+                        .ifBlank { element.optString("download_url") }
+                        .ifBlank { element.optString("display_url") }
+                        .ifBlank { element.optString("src") }
+                        .ifBlank { element.optString("image") }
 
-                val isVideo = element.cleanString("type", "media_type").equals("video", ignoreCase = true) ||
-                    element.cleanString("format").equals("mp4", ignoreCase = true) ||
-                    (MediaUrlHints.looksLikeVideo(cUrl) && !MediaUrlHints.looksLikeImage(cUrl))
+                    if (cUrl.isNotBlank() && seen.add(cUrl)) {
+                        val isVideo = element.optString("type").equals("video", ignoreCase = true) ||
+                                element.optString("format").equals("mp4", ignoreCase = true) ||
+                                cUrl.contains(".mp4", ignoreCase = true)
+                        val rawFormat = if (isVideo) "mp4" else "jpg"
 
-                results.add(
-                    CarouselItem(
-                        url = cUrl,
-                        format = if (isVideo) "mp4" else "jpg",
-                        label = element.cleanString("label").ifBlank {
-                            if (isVideo) "Video ${results.size + 1}" else "Photo ${results.size + 1}"
-                        },
-                        isHd = element.optBoolean("isHd", true)
-                    )
-                )
+                        results.add(
+                            CarouselItem(
+                                url = cUrl,
+                                format = rawFormat,
+                                label = element.optString("label", if (isVideo) "Video ${results.size + 1}" else "Photo ${results.size + 1}"),
+                                isHd = element.optBoolean("isHd", true)
+                            )
+                        )
+                    }
+                }
             }
         }
         return results

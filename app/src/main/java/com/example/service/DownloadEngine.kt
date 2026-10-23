@@ -26,20 +26,20 @@ object UrlResolver {
 
         return if (matcher.find()) {
             var url = matcher.group(0).trim()
-            url = url.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*')
+            url = url.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*', '_')
             while (url.endsWith("/") && !url.endsWith("://")) {
                 url = url.substring(0, url.length - 1)
             }
-            url.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*')
+            url.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*', '_')
         } else {
             val trimmed = input.trim().trimStart('=', '/', '\\', ' ', '\t', '\n', '\r', '"', '\'', '<', '>', '#', '*', '`', '-', '+', ':')
             if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
                 val candidate = trimmed.split("\\s+".toRegex())[0]
-                var cand = candidate.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*')
+                var cand = candidate.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*', '_')
                 while (cand.endsWith("/") && !cand.endsWith("://")) {
                     cand = cand.substring(0, cand.length - 1)
                 }
-                cand.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*')
+                cand.trimEnd('.', ',', ';', ':', ')', ']', '}', '\'', '"', '\\', '>', '<', '?', '!', '=', '`', '*', '_')
             } else {
                 trimmed
             }

@@ -37,9 +37,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,11 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.example.model.MediaKind
 import com.example.model.MediaResult
-import com.example.model.authorLabel
-import com.example.model.mediaItems
-import com.example.model.mediaKind
 import com.example.ui.theme.CyberBackground
 import com.example.ui.theme.CyberBorder
 import com.example.ui.theme.CyberSurfaceCard
@@ -71,15 +65,13 @@ import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.SuccessGreen
 
 /**
- * Post card + download actions with strict Scoped Storage routing:
- * - Photos -> Pictures/MediaDownloader (JPG)
- * - Videos -> Movies/MediaDownloader (MP4)
- * - Audio  -> Music/MediaDownloader (MP3)
+ * Modern Compose DownloadScreen component.
  *
- * The button text and icon follow the post type:
- * single video, single photo, or a photo album (TikTok slideshow / Instagram carousel).
- * The green success card is drawn ONLY for [DownloadUiState.Success], which the ViewModel
- * publishes after every file was fully written to the gallery.
+ * Provides a unified smart action button for saving media (single or multi-item batch)
+ * with strict Scoped Storage routing:
+ * - Images -> MediaStore.Images.Media / DIRECTORY_PICTURES
+ * - Videos -> MediaStore.Video.Media / DIRECTORY_MOVIES
+ * - Audio  -> MediaStore.Audio.Media / DIRECTORY_MUSIC
  */
 @Composable
 fun DownloadScreen(
@@ -90,16 +82,32 @@ fun DownloadScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val progress by viewModel.progress.collectAsState()
 
-    // Shows the post in the Ready state; keeps a running download / success card on recomposition
-    LaunchedEffect(media) { viewModel.prepare(media) }
+    val hasCarousel = media.carouselItems.isNotEmpty()
+    val isMultiPhoto = media.photoUrls.size > 1
+    val isBatch = hasCarousel || isMultiPhoto
 
-    val items = remember(media) { media.mediaItems() }
-    val kind = remember(media) { media.mediaKind() }
-    val totalItems = items.size.coerceAtLeast(1)
-    val photoCount = items.count { !it.isVideo }
-    val videoCount = items.count { it.isVideo }
-    val isMultiple = totalItems > 1
+    val totalItems = when {
+        hasCarousel -> media.carouselItems.size
+        isMultiPhoto -> media.photoUrls.size
+        else -> 1
+    }
+
+    val videoCount = when {
+        hasCarousel -> media.carouselItems.count { it.format.equals("mp4", ignoreCase = true) }
+        media.photoUrls.isEmpty() && media.videoUrl.isNotBlank() -> 1
+        else -> 0
+    }
+
+    val photoCount = when {
+        hasCarousel -> media.carouselItems.count { !it.format.equals("mp4", ignoreCase = true) }
+        isMultiPhoto -> media.photoUrls.size
+        media.photoUrls.size == 1 -> 1
+        else -> 0
+    }
+
+    val isSinglePhoto = !isBatch && (media.photoUrls.size == 1 || (!media.videoUrl.contains(".mp4") && media.videoUrl.contains(".jpg")))
 
     Column(
         modifier = modifier
@@ -171,14 +179,14 @@ fun DownloadScreen(
                     )
                 } else {
                     Icon(
-                        imageVector = if (kind == MediaKind.VIDEO) Icons.Default.PlayArrow else Icons.Default.Image,
+                        imageVector = if (isSinglePhoto) Icons.Default.Image else Icons.Default.PlayArrow,
                         contentDescription = "Preview",
                         tint = NeonCyan,
                         modifier = Modifier.size(32.dp)
                     )
                 }
 
-                if (isMultiple) {
+                if (isBatch) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -209,24 +217,21 @@ fun DownloadScreen(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = media.authorLabel(),
-                    color = CyberTextSecondary,
-                    fontSize = 12.sp
-                )
+                if (!media.author.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "@${media.author}",
+                        color = CyberTextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = when (kind) {
-                        MediaKind.CAROUSEL_IMAGES ->
-                            if (isArabic) "$totalItems صور جاهزة للتنزيل" else "$totalItems photos ready to save"
-                        MediaKind.CAROUSEL_MIXED ->
-                            if (isArabic) "$totalItems ملفات جاهزة للتنزيل" else "$totalItems files ready to save"
-                        MediaKind.IMAGE ->
-                            if (isArabic) "صورة جاهزة للحفظ في المعرض" else "Photo ready to save"
-                        MediaKind.VIDEO ->
-                            if (isArabic) "فيديو جاهز للحفظ في المعرض" else "Video ready to save"
+                    text = if (isBatch) {
+                        if (isArabic) "$totalItems عناصر جاهزة للتنزيل المباشر" else "$totalItems items ready to save"
+                    } else {
+                        if (isArabic) "جاهز للحفظ في المعرض" else "Ready to save to Gallery"
                     },
                     color = SuccessGreen,
                     fontSize = 11.sp
@@ -312,26 +317,15 @@ fun DownloadScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    if (state.percent <= 0) {
-                        LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(CircleShape),
-                            color = NeonCyan,
-                            trackColor = Color(0xFF1E2A40)
-                        )
-                    } else {
-                        LinearProgressIndicator(
-                            progress = { (state.percent / 100f).coerceIn(0f, 1f) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(CircleShape),
-                            color = NeonCyan,
-                            trackColor = Color(0xFF1E2A40)
-                        )
-                    }
+                    LinearProgressIndicator(
+                        progress = { (state.percent / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(CircleShape),
+                        color = NeonCyan,
+                        trackColor = Color(0xFF1E2A40)
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -341,7 +335,7 @@ fun DownloadScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (state.speedText.isNotBlank()) state.speedText else if (isArabic) "جاري المعالجة..." else "Processing...",
+                            text = if (state.speedText.isNotBlank()) "Speed: ${state.speedText}" else "Processing...",
                             color = CyberTextMuted,
                             fontSize = 11.sp
                         )
@@ -376,7 +370,7 @@ fun DownloadScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Button(
-                        onClick = { viewModel.downloadMedia(isArabic = isArabic) },
+                        onClick = { viewModel.startUnifiedDownload(media, isArabic = isArabic) },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = ElectricBlue,
                             contentColor = Color(0xFF141417)
@@ -389,29 +383,31 @@ fun DownloadScreen(
                 }
             }
 
-            is DownloadUiState.Ready, DownloadUiState.Idle -> {
-                // Dynamic action button: text and icon follow the post type
-                val primaryTitle = when (kind) {
-                    MediaKind.VIDEO ->
-                        if (isArabic) "تحميل الفيديو (HD MP4)" else "Download Video (HD MP4)"
-                    MediaKind.IMAGE ->
-                        if (isArabic) "تحميل الصورة (HD JPG)" else "Download Photo (HD JPG)"
-                    MediaKind.CAROUSEL_IMAGES ->
-                        if (isArabic) "تحميل الصور بالكامل ($totalItems صور)" else "Download All Photos ($totalItems photos)"
-                    MediaKind.CAROUSEL_MIXED ->
-                        if (isArabic) "تحميل الكل ($totalItems ملفات)" else "Download All ($totalItems files)"
+            DownloadUiState.Idle -> {
+                // Unified Action Button
+                val primaryTitle = when {
+                    isBatch -> if (isArabic) "تحميل الكل ($totalItems ملفات)" else "Download All ($totalItems Files)"
+                    isSinglePhoto -> if (isArabic) "تحميل الصورة (JPG)" else "Download Photo (JPG)"
+                    else -> if (isArabic) "تحميل الفيديو (HD MP4)" else "Download Video (HD MP4)"
                 }
 
-                val primarySubtext = when (kind) {
-                    MediaKind.VIDEO ->
-                        if (isArabic) "حفظ في ألبوم Movies" else "Saved to Movies"
-                    MediaKind.IMAGE ->
-                        if (isArabic) "حفظ في ألبوم Pictures" else "Saved to Pictures"
-                    MediaKind.CAROUSEL_IMAGES ->
-                        if (isArabic) "حفظ جميع الصور في ألبوم Pictures" else "All photos saved to Pictures"
-                    MediaKind.CAROUSEL_MIXED ->
-                        if (isArabic) "$photoCount صور (Pictures) • $videoCount فيديو (Movies)"
-                        else "$photoCount photos (Pictures) • $videoCount videos (Movies)"
+                val primarySubtext = when {
+                    isBatch && videoCount > 0 && photoCount > 0 -> {
+                        if (isArabic) "$photoCount صور (Pictures) • $videoCount فيديوهات (Movies)"
+                        else "$photoCount Photos • $videoCount Videos"
+                    }
+                    isBatch && photoCount > 0 -> {
+                        if (isArabic) "$photoCount صور أصلية في ألبوم Pictures" else "$photoCount Photos to Pictures"
+                    }
+                    isBatch && videoCount > 0 -> {
+                        if (isArabic) "$videoCount فيديوهات عالية الدقة في ألبوم Movies" else "$videoCount Videos to Movies"
+                    }
+                    isSinglePhoto -> {
+                        if (isArabic) "حفظ كصورة أصلية في ألبوم Pictures" else "Save High-Res Image to Pictures"
+                    }
+                    else -> {
+                        if (isArabic) "حفظ كفيديو عالي الدقة في ألبوم Movies" else "Save HD Video to Movies"
+                    }
                 }
 
                 Box(
@@ -424,7 +420,7 @@ fun DownloadScreen(
                             )
                         )
                         .clickable {
-                            viewModel.downloadMedia(isAudioOnly = false, isArabic = isArabic)
+                            viewModel.startUnifiedDownload(media, isAudioOnly = false, isArabic = isArabic)
                         }
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                         .testTag("download_screen_unified_button")
@@ -446,10 +442,10 @@ fun DownloadScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = when (kind) {
-                                        MediaKind.VIDEO -> Icons.Default.Videocam
-                                        MediaKind.IMAGE -> Icons.Default.Image
-                                        MediaKind.CAROUSEL_IMAGES, MediaKind.CAROUSEL_MIXED -> Icons.Default.PhotoLibrary
+                                    imageVector = when {
+                                        isBatch -> Icons.Default.PhotoLibrary
+                                        isSinglePhoto -> Icons.Default.Image
+                                        else -> Icons.Default.Videocam
                                     },
                                     contentDescription = null,
                                     tint = Color(0xFF141417),
@@ -484,7 +480,7 @@ fun DownloadScreen(
                     }
                 }
 
-                if (!media.audioUrl.isNullOrBlank() && kind == MediaKind.VIDEO) {
+                if (!media.audioUrl.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Box(
                         modifier = Modifier
@@ -493,7 +489,7 @@ fun DownloadScreen(
                             .background(CyberSurfaceElevated)
                             .border(1.dp, CyberBorder, RoundedCornerShape(14.dp))
                             .clickable {
-                                viewModel.downloadMedia(isAudioOnly = true, isArabic = isArabic)
+                                viewModel.startUnifiedDownload(media, isAudioOnly = true, isArabic = isArabic)
                             }
                             .padding(horizontal = 14.dp, vertical = 10.dp)
                     ) {

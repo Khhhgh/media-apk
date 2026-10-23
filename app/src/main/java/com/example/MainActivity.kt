@@ -1,14 +1,10 @@
 package com.example
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -51,17 +47,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.AdManager
-import com.example.ui.DownloadScreen
-import com.example.ui.DownloadViewModel
 import com.example.ui.MainViewModel
 import com.example.ui.components.AdWebViewDialog
 import com.example.ui.components.AppHeader
 import com.example.ui.components.HistoryView
+import com.example.ui.components.MediaPreviewModal
 import com.example.ui.components.PlatformChips
 import com.example.ui.components.UrlInputCard
 import com.example.ui.components.VideoPlayerDialog
@@ -77,37 +71,27 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
-    private val downloadViewModel: DownloadViewModel by viewModels()
-
-    // Android 7-9 only: saving to Pictures / Movies needs the legacy storage permission
-    private val storagePermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        }
-
         setContent {
             MediaDownloadTheme {
-                MediaDownloadApp(viewModel = viewModel, downloadViewModel = downloadViewModel)
+                MediaDownloadApp(viewModel = viewModel)
             }
         }
     }
 }
 
 @Composable
-fun MediaDownloadApp(viewModel: MainViewModel, downloadViewModel: DownloadViewModel) {
+fun MediaDownloadApp(viewModel: MainViewModel) {
     val isArabic by viewModel.isArabic.collectAsState()
     val urlInput by viewModel.urlInput.collectAsState()
     val isExtracting by viewModel.isExtracting.collectAsState()
     val extractedMedia by viewModel.extractedMedia.collectAsState()
+    val downloadProgress by viewModel.downloadProgress.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
     val downloadsHistory by viewModel.downloadsHistory.collectAsState()
     val showYouTubeBlockedDialog by viewModel.showYouTubeBlockedDialog.collectAsState()
     val clipboardDetectedUrl by viewModel.clipboardDetectedUrl.collectAsState()
@@ -117,11 +101,6 @@ fun MediaDownloadApp(viewModel: MainViewModel, downloadViewModel: DownloadViewMo
     val detectedPlatform by viewModel.detectedPlatform.collectAsState()
     val isServerOnline by viewModel.isServerOnline.collectAsState()
     val showInAppAd by viewModel.showInAppAd.collectAsState()
-
-    // Clear the download state when the post card goes away (new link being extracted / card closed)
-    LaunchedEffect(extractedMedia) {
-        if (extractedMedia == null) downloadViewModel.reset()
-    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
@@ -291,10 +270,15 @@ fun MediaDownloadApp(viewModel: MainViewModel, downloadViewModel: DownloadViewMo
                             if (extractedMedia != null) {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                                    DownloadScreen(
+                                    MediaPreviewModal(
                                         media = extractedMedia!!,
-                                        viewModel = downloadViewModel,
                                         isArabic = isArabic,
+                                        progress = downloadProgress,
+                                        uiState = uiState,
+                                        onDownloadQuality = { quality ->
+                                            viewModel.startDownload(quality)
+                                        },
+                                        onCancelDownload = { viewModel.cancelDownload() },
                                         onDismiss = { viewModel.dismissExtractedModal() }
                                     )
                                 }
